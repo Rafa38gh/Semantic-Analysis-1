@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from ast_nodes import Program, SourceSpan, FunctionDecl, TypeName
+import ast_nodes as ast
 from semantic_errors import SemanticDiagnostic, SemanticError, SemanticErrorKind
 from symbols import FunctionSymbol, Scope, Symbol, SymbolKind
 
@@ -50,6 +51,9 @@ class NameResolver:
             self.collect_function(function)
 
         self.check_main(program)
+
+        for function in program.functions:
+            self.resolve_function(function)
         
         if self.diagnostics:
             raise SemanticError(self.diagnostics)
@@ -80,3 +84,119 @@ class NameResolver:
         if main.type is not TypeName.INT or main.parameter_types:
            self.error(SemanticErrorKind.INVALID_MAIN, "a assinatura da main deve ser 'int main()'", main.declaration.span)
 
+    def resolve_function(self, function: FunctionDecl) -> None:
+        scope = Scope(parent=None)
+        function.body.metadata["scope"] = scope
+
+        for parameter in function.parameters:
+            symbol = Symbol(
+                name=parameter.name,
+                kind=SymbolKind.PARAMETER,
+                type=parameter.type,
+                declaration=parameter,
+            )
+            parameter.metadata["symbol"] = symbol
+            if not declare(scope, symbol):
+                self.error(
+                    SemanticErrorKind.DUPLICATE_DECLARATION,
+                    f"parâmetro '{parameter.name}' já declarado",
+                    parameter.span,
+                )
+
+        self.scope = scope
+        for statement in function.body.statements:
+            self.resolve_statement(statement)
+        self.scope = None
+
+    def resolve_block(self, block: ast.Block) -> None:
+        """Bloco interno: escopo novo, filho do corrente."""
+        scope = Scope(parent=self.scope)
+        block.metadata["scope"] = scope
+
+        previous = self.scope
+        self.scope = scope
+        for statement in block.statements:
+            self.resolve_statement(statement)
+        self.scope = previous
+
+    def resolve_statement(self, statement: ast.Stmt) -> None:
+        match statement:
+            case ast.Block():
+                self.resolve_block(statement)
+            case ast.VarDecl():
+                self.resolve_var_decl(statement)
+            case ast.Assignment():
+                self.resolve_identifier(statement.target)
+                self.resolve_expression(statement.value)
+            case ast.CallStmt():
+                self.resolve_expression(statement.call)
+            case ast.IfStmt():
+                self.resolve_expression(statement.condition)
+                self.resolve_block(statement.then_block)
+                if statement.else_block is not None:
+                    self.resolve_block(statement.else_block)
+            case ast.WhileStmt():
+                self.resolve_expression(statement.condition)
+                self.resolve_block(statement.body)
+            case ast.ReturnStmt():
+                if statement.value is not None:
+                    self.resolve_expression(statement.value)
+            case ast.PrintStmt():
+                for item in statement.items:
+                    if isinstance(item, ast.Expr):
+                        self.resolve_expression(item)
+
+    def resolve_var_decl(self, declaration: ast.VarDecl) -> None:
+        symbol = Symbol(
+            name=declaration.name,
+            kind=SymbolKind.VARIABLE,
+            type=declaration.type,
+            declaration=declaration,
+        )
+        declaration.metadata["symbol"] = symbol
+
+        if not declare(self.scope, symbol):
+            self.error(
+                SemanticErrorKind.DUPLICATE_DECLARATION,
+                f"variável '{declaration.name}' já declarada neste escopo",
+                declaration.span,
+            )
+
+        if declaration.initializer is not None:
+            self.resolve_expression(declaration.initializer)
+
+    def resolve_identifier(self, identifier: ast.IdentifierExpr) -> None:
+        symbol = lookup(self.scope, identifier.name)
+        if symbol is None:
+            self.error(
+                SemanticErrorKind.UNDECLARED_VARIABLE,
+                f"variável '{identifier.name}' não declarada",
+                identifier.span,
+            )
+            return
+        identifier.metadata["symbol"] = symbol
+
+    def resolve_expression(self, expression: ast.Expr) -> None:
+        match expression:
+            case ast.IdentifierExpr():
+                self.resolve_identifier(expression)
+            case ast.CallExpr():
+                symbol = self.functions.get(expression.name)
+                if symbol is None:
+                    self.error(
+                        SemanticErrorKind.UNDECLARED_FUNCTION,
+                        f"função '{expression.name}' não declarada",
+                        expression.span,
+                    )
+                else:
+                    expression.metadata["symbol"] = symbol
+                # Todos os argumentos são visitados, mesmo com erro.
+                for argument in expression.arguments:
+                    self.resolve_expression(argument)
+            case ast.UnaryExpr():
+                self.resolve_expression(expression.operand)
+            case ast.BinaryExpr():
+                self.resolve_expression(expression.left)
+                self.resolve_expression(expression.right)
+            case ast.IntLiteral() | ast.BoolLiteral() | ast.StringLiteral():
+                pass
