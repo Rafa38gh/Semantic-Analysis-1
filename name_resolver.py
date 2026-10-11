@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from ast_nodes import Program, SourceSpan, FunctionDecl, TypeName
 import ast_nodes as ast
 from semantic_errors import SemanticDiagnostic, SemanticError, SemanticErrorKind
 from symbols import FunctionSymbol, Scope, Symbol, SymbolKind
@@ -27,7 +26,7 @@ def lookup(scope: Scope | None, name: str) -> Symbol | None:
     return None
 
 
-def resolve_names(program: Program) -> None:
+def resolve_names(program: ast.Program) -> None:
     """Construa escopos, símbolos e vínculos entre usos e declarações."""
 
     # 1. Colete todas as assinaturas de função.
@@ -42,11 +41,12 @@ class NameResolver:
     def __init__(self) -> None:
         self.diagnostics: list[SemanticDiagnostic] = [] #Lista de erros
         self.functions: dict[str, FunctionSymbol] = {}      # Tabela de funções
+        self.scope: Scope | None = None
 
-    def error(self, kind: SemanticErrorKind, message: str, span: SourceSpan) -> None:
+    def error(self, kind: SemanticErrorKind, message: str, span: ast.SourceSpan) -> None:
         self.diagnostics.append(SemanticDiagnostic(kind, message, span))
 
-    def resolve_program(self, program: Program) -> None:
+    def resolve_program(self, program: ast.Program) -> None:
         for function in program.functions:
             self.collect_function(function)
 
@@ -58,7 +58,7 @@ class NameResolver:
         if self.diagnostics:
             raise SemanticError(self.diagnostics)
 
-    def collect_function(self, function: FunctionDecl) -> None:
+    def collect_function(self, function: ast.FunctionDecl) -> None:
         symbol = FunctionSymbol(
             name=function.name,
             kind = SymbolKind.FUNCTION,
@@ -74,17 +74,17 @@ class NameResolver:
 
         self.functions[function.name] = symbol
 
-    def check_main(self, program: Program) -> None:
+    def check_main(self, program: ast.Program) -> None:
         main = self.functions.get("main")
 
         if main is None:
             self.error(SemanticErrorKind.INVALID_MAIN, "programa não declarou 'int main()'", program.span)
             return
 
-        if main.type is not TypeName.INT or main.parameter_types:
+        if main.type is not ast.TypeName.INT or main.parameter_types:
            self.error(SemanticErrorKind.INVALID_MAIN, "a assinatura da main deve ser 'int main()'", main.declaration.span)
 
-    def resolve_function(self, function: FunctionDecl) -> None:
+    def resolve_function(self, function: ast.FunctionDecl) -> None:
         scope = Scope(parent=None)
         function.body.metadata["scope"] = scope
 
@@ -145,6 +145,8 @@ class NameResolver:
                 for item in statement.items:
                     if isinstance(item, ast.Expr):
                         self.resolve_expression(item)
+            case _:
+                raise TypeError(f"comando desconhecido: {type(statement).__name__}")
 
     def resolve_var_decl(self, declaration: ast.VarDecl) -> None:
         symbol = Symbol(
@@ -200,3 +202,5 @@ class NameResolver:
                 self.resolve_expression(expression.right)
             case ast.IntLiteral() | ast.BoolLiteral() | ast.StringLiteral():
                 pass
+            case _:
+                raise TypeError(f"expressão desconhecida: {type(expression).__name__}")
