@@ -1,3 +1,5 @@
+## OBS: Conforme discutido em sala, entregamos o projeto no dia 11/10 devido à problemas pessoais
+
 # Projeto de Compiladores — Etapa 4: Análise Semântica 1
 
 Nesta etapa, o grupo implementará resolução de nomes, escopos e verificação de
